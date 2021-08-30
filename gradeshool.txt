@@ -1,0 +1,92 @@
+Reasonable Solutions
+Using a dictionary as a database
+
+A straightforward approach is to use a dict as the database.
+
+class School:
+    def __init__(self):
+        self._db = {}
+
+    def add_student(self, name, grade):
+        self._db.setdefault(grade, [])
+        self._db[grade].append(name)
+
+    def roster(self):
+        return [n for g in sorted(self._db) for n in self.grade(g)]
+
+    def grade(self, num):
+        if num not in self._db:
+            return []
+        return sorted(self._db[num])
+
+This is simple enough, and introduces the dict.setdefault method, but it requires some book-keeping to allow School.grade to handle grades that haven't yet had students added. A common suggestion is to instead leverage collections.defaultdict, as it will remove a few lines and do the book-keeping automatically. However this introduces a new wrinkle: if School.grade is ever called with an unknown grade number an empty list will automatically be inserted for that grade. In some implementations this will force the student to filter out empty grades in School.roster.
+
+Another common approach is for Student.add_student to do an in-place self._db[grade].sort() after each student is inserted. This removes the need for most of the sorted calls in Student.grade and Student.roster, however it's a relatively costly, since every later call to add_student necessarily receives a list that's already sorted. If you see this suggest bisect.insort instead.
+Using a list of tuples as a database
+
+An alternative approach is to use a list of tuples as the database:
+
+from bisect import insort
+
+class School:
+    def __init__(self):
+        self._db = []
+
+    def add_student(self, name, grade):
+        insort(self._db, (grade, name))
+
+    def roster(self, num):
+        return [n for _, n in self._db]
+
+    def grade(self, grade_number):
+        return [n for g, n in self._db if g == grade_number]
+
+This dramatically simplifies both Student.grade and student.roster, and (with bisect.insort) leverages the natural sort order of tuples to keep everything in its most-commonly-required sort order at all times. Finding the students in a given grade is now O(N) instead of the nicer O(1) with a dictionary, but realistically the two are identical for the input constraints of the problem as stated.
+Using a tuple of tuples as a database
+
+Here we have the first example of a solution that addresses the issue of mutability; in both of the above directy mutation of the underlying database was possible, but here we eliminate that fault by simply creating a new immutable database after each insertion.
+
+from bisect import bisect
+
+class School:
+    def __init__(self):
+        self._db = ()
+
+    def add_student(self, name, grade):
+        entry = (grade, name)
+        index = bisect(self._db, entry)
+        self._db = self._db[:index] + (entry,) + self._db[index:]
+
+    def roster(self):
+        return [n for _, n in self._db]
+
+    def grade(self, grade_number):
+        return [n for g, n in self._db if g == grade_number]
+
+Using a database as a database
+
+We're not here to teach SQL, but the more advanced student will discover (or will want to know) that in Python we can always address all of the compromises described above (and several we haven't, like persistance of our database) using the real-world, battle-tested SQL RDBMS that ships with the language.
+
+And in not many more lines than the hacks above.
+
+import sqlite3
+
+class School:
+    def __init__(self):
+        self._db = sqlite3.connect(":memory:")
+        query = "CREATE TABLE grades (grade INTEGER, student TEXT)"
+        with self._db:
+            self._db.execute(query)
+
+    def add_student(self, name, grade):
+        query = "INSERT INTO grades VALUES (?, ?)"
+        with self._db:
+            self._db.execute(query, (grade, name))
+
+    def roster(self):
+        query = "SELECT student FROM grades ORDER BY grade, student"
+        return [s[0] for s in self._db.execute(query)]
+
+    def grade(self, grade):
+        query = "SELECT student FROM grades WHERE grade=? ORDER BY student"
+        return [s[0] for s in self._db.execute(query, (grade,))]
